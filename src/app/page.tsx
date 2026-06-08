@@ -52,6 +52,16 @@ type ApplyResult = {
   skippedCount: number;
 };
 
+type WeatherSlot = {
+  hour: number;
+  label: string;
+  tempF: number | null;
+  rainChance: number | null;
+  precipitationIn: number | null;
+  summary: string;
+  icon: string;
+};
+
 type WeatherDay = {
   date: string;
   dateLabel: string;
@@ -62,6 +72,14 @@ type WeatherDay = {
   precipitationIn: number | null;
   summary: string;
   icon: string;
+  slots: {
+    morning: WeatherSlot | null;
+    brunch: WeatherSlot | null;
+    daytime: WeatherSlot | null;
+    afternoon: WeatherSlot | null;
+    dinner: WeatherSlot | null;
+    night: WeatherSlot | null;
+  };
 };
 
 type WeatherResponse = {
@@ -180,6 +198,23 @@ function getWeatherForDecision(decision: TripDecision, weatherDays: WeatherDay[]
   return getWeatherForDateLabel(decision.dateLabel, weatherDays);
 }
 
+function getWeatherSlotForDecision(decision: TripDecision, weatherDays: WeatherDay[]) {
+  const day = getWeatherForDecision(decision, weatherDays);
+  if (!day) return null;
+
+  const label = decision.timeLabel.toLowerCase();
+  const title = decision.title.toLowerCase();
+
+  if (label.includes("brunch") || title.includes("brunch")) return day.slots.brunch;
+  if (label.includes("morning") || title.includes("morning")) return day.slots.morning;
+  if (label.includes("afternoon")) return day.slots.afternoon;
+  if (label.includes("daytime")) return day.slots.daytime;
+  if (label.includes("dinner") || label.includes("game") || title.includes("dinner")) return day.slots.dinner;
+  if (label.includes("night") || title.includes("night")) return day.slots.night;
+
+  return day.slots.daytime;
+}
+
 function formatWeatherTemp(day: WeatherDay) {
   const high = day.highF === null ? "?" : `${day.highF}°`;
   const low = day.lowF === null ? "?" : `${day.lowF}°`;
@@ -189,6 +224,12 @@ function formatWeatherTemp(day: WeatherDay) {
 function formatRain(day: WeatherDay) {
   if (day.rainChance === null) return "Rain unknown";
   return `${day.rainChance}% rain`;
+}
+
+function formatSlotWeather(slot: WeatherSlot) {
+  const temp = slot.tempF === null ? "?" : `${slot.tempF}°`;
+  const rain = slot.rainChance === null ? "rain unknown" : `${slot.rainChance}% rain`;
+  return `${slot.icon} ${slot.label}: ${temp} · ${rain}`;
 }
 
 function getDayIntro(dateLabel: string) {
@@ -919,6 +960,7 @@ export default function Home() {
                   const userVote = decision.options.find((option) => option.votes.includes(name));
                   const draft = draftByDecision[decision.id] ?? emptyDraft();
                   const decisionWeather = weather ? getWeatherForDecision(decision, weather.days) : undefined;
+                  const decisionWeatherSlot = weather ? getWeatherSlotForDecision(decision, weather.days) : null;
 
                   return (
                     <article key={decision.id} id={decision.id} className="scroll-mt-6 rounded-[1.5rem] border border-stone-200 bg-white p-4 sm:p-5">
@@ -927,7 +969,11 @@ export default function Home() {
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-black uppercase tracking-wider text-sky-700">{decision.timeLabel}</span>
                             <span className={`rounded-full px-3 py-1 text-xs font-black uppercase tracking-wider ${decision.status === "Locked" ? "bg-stone-200 text-stone-700" : "bg-lime-100 text-lime-700"}`}>{decision.status}</span>
-                            {decisionWeather ? (
+                            {decisionWeatherSlot ? (
+                              <span className="rounded-full bg-orange-100 px-3 py-1 text-xs font-black uppercase tracking-wider text-orange-700">
+                                {formatSlotWeather(decisionWeatherSlot)}
+                              </span>
+                            ) : decisionWeather ? (
                               <span className="rounded-full bg-orange-100 px-3 py-1 text-xs font-black uppercase tracking-wider text-orange-700">
                                 {decisionWeather.icon} {formatWeatherTemp(decisionWeather)} · {formatRain(decisionWeather)}
                               </span>

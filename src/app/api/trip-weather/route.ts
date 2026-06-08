@@ -11,8 +11,17 @@ type OpenMeteoDaily = {
   precipitation_sum?: number[];
 };
 
+type OpenMeteoHourly = {
+  time?: string[];
+  weather_code?: number[];
+  temperature_2m?: number[];
+  precipitation_probability?: number[];
+  precipitation?: number[];
+};
+
 type OpenMeteoResponse = {
   daily?: OpenMeteoDaily;
+  hourly?: OpenMeteoHourly;
 };
 
 function getWeatherSummary(code: number) {
@@ -44,7 +53,7 @@ function formatDateLabel(dateValue: string) {
 
   return new Intl.DateTimeFormat("en-US", {
     weekday: "long",
-    month: "short",
+    month: "long",
     day: "numeric",
     timeZone: "America/Bogota",
   }).format(date);
@@ -61,9 +70,45 @@ function formatShortLabel(dateValue: string) {
   }).format(date);
 }
 
+function formatHourLabel(hour: number) {
+  const date = new Date(`2026-06-11T${String(hour).padStart(2, "0")}:00:00-05:00`);
+
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    hour12: true,
+    timeZone: "America/Bogota",
+  }).format(date);
+}
+
 function roundNumber(value: number | undefined) {
   if (typeof value !== "number" || Number.isNaN(value)) return null;
   return Math.round(value);
+}
+
+function getHourlySlot(data: OpenMeteoHourly | undefined, dateValue: string, hour: number) {
+  const timeKey = `${dateValue}T${String(hour).padStart(2, "0")}:00`;
+  const index = data?.time?.findIndex((time) => time === timeKey) ?? -1;
+
+  if (index < 0) return null;
+
+  const code = data?.weather_code?.[index] ?? 3;
+  const rainChance = roundNumber(data?.precipitation_probability?.[index]);
+  const tempF = roundNumber(data?.temperature_2m?.[index]);
+  const precipitationIn =
+    typeof data?.precipitation?.[index] === "number"
+      ? Number(data.precipitation[index].toFixed(2))
+      : null;
+
+  return {
+    hour,
+    label: formatHourLabel(hour),
+    tempF,
+    rainChance,
+    precipitationIn,
+    code,
+    summary: getWeatherSummary(code),
+    icon: getWeatherIcon(code),
+  };
 }
 
 export async function GET() {
@@ -83,6 +128,10 @@ export async function GET() {
         "precipitation_probability_max",
         "precipitation_sum",
       ].join(",")
+    );
+    url.searchParams.set(
+      "hourly",
+      ["weather_code", "temperature_2m", "precipitation_probability", "precipitation"].join(",")
     );
     url.searchParams.set("temperature_unit", "fahrenheit");
     url.searchParams.set("precipitation_unit", "inch");
@@ -127,6 +176,14 @@ export async function GET() {
         code,
         summary: getWeatherSummary(code),
         icon: getWeatherIcon(code),
+        slots: {
+          morning: getHourlySlot(data.hourly, dateValue, 9),
+          brunch: getHourlySlot(data.hourly, dateValue, 11),
+          daytime: getHourlySlot(data.hourly, dateValue, 14),
+          afternoon: getHourlySlot(data.hourly, dateValue, 16),
+          dinner: getHourlySlot(data.hourly, dateValue, 19),
+          night: getHourlySlot(data.hourly, dateValue, 22),
+        },
       };
     });
 
