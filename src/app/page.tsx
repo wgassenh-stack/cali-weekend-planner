@@ -74,6 +74,13 @@ type WeatherResponse = {
 
 const dayOrder = ["Thursday, June 11", "Friday, June 12", "Saturday, June 13", "Sunday, June 14"];
 
+const dateLabelToIsoDate: Record<string, string> = {
+  "Thursday, June 11": "2026-06-11",
+  "Friday, June 12": "2026-06-12",
+  "Saturday, June 13": "2026-06-13",
+  "Sunday, June 14": "2026-06-14",
+};
+
 function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
@@ -162,17 +169,15 @@ function findOption(decisions: TripDecision[], decisionId: string | null, option
   return option || null;
 }
 
-function getDayKey(dateLabel: string) {
-  return dateLabel.replace(",", "");
+function getWeatherForDateLabel(dateLabel: string, weatherDays: WeatherDay[]) {
+  const isoDate = dateLabelToIsoDate[dateLabel];
+  if (!isoDate) return undefined;
+
+  return weatherDays.find((day) => day.date === isoDate);
 }
 
 function getWeatherForDecision(decision: TripDecision, weatherDays: WeatherDay[]) {
-  const target = getDayKey(decision.dateLabel);
-
-  return weatherDays.find((day) => {
-    const dayKey = day.dateLabel.replace(",", "");
-    return dayKey === target;
-  });
+  return getWeatherForDateLabel(decision.dateLabel, weatherDays);
 }
 
 function formatWeatherTemp(day: WeatherDay) {
@@ -702,7 +707,7 @@ export default function Home() {
               <div className="mt-16 max-w-3xl lg:mt-24">
                 <h1 className="text-5xl font-black tracking-tight sm:text-7xl">Cali Trip 2026</h1>
                 <p className="mt-4 max-w-2xl text-xl font-semibold text-white/90">
-                  Food, rooftop drinks, salsa, World Cup, and one proper Saturday night party.
+                  This is just a guide to help us decide what to do when we&apos;re in Cali. Actual plans will be at the whims of drunk us.
                 </p>
               </div>
 
@@ -768,7 +773,7 @@ export default function Home() {
 
           <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {dayOrder.map((dateLabel) => {
-              const matchingDay = weather?.days.find((day) => day.dateLabel.replace(",", "") === dateLabel.replace(",", ""));
+              const matchingDay = weather ? getWeatherForDateLabel(dateLabel, weather.days) : undefined;
 
               return (
                 <div key={dateLabel} className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
@@ -897,10 +902,10 @@ export default function Home() {
                   <h2 className="text-3xl font-black">{group.dateLabel}</h2>
                   <p className="mt-1 text-sm text-stone-600">{getDayIntro(group.dateLabel)}</p>
                 </div>
-                {weather?.days.find((day) => day.dateLabel.replace(",", "") === group.dateLabel.replace(",", "")) ? (
+                {weather && getWeatherForDateLabel(group.dateLabel, weather.days) ? (
                   <div className="rounded-2xl bg-stone-950 px-4 py-3 text-sm font-bold text-white">
                     {(() => {
-                      const day = weather.days.find((weatherDay) => weatherDay.dateLabel.replace(",", "") === group.dateLabel.replace(",", ""));
+                      const day = getWeatherForDateLabel(group.dateLabel, weather.days);
                       return day ? `${day.icon} ${formatWeatherTemp(day)} · ${formatRain(day)}` : "";
                     })()}
                   </div>
