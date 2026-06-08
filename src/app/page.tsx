@@ -52,6 +52,28 @@ type ApplyResult = {
   skippedCount: number;
 };
 
+type WeatherDay = {
+  date: string;
+  dateLabel: string;
+  shortLabel: string;
+  highF: number | null;
+  lowF: number | null;
+  rainChance: number | null;
+  precipitationIn: number | null;
+  summary: string;
+  icon: string;
+};
+
+type WeatherResponse = {
+  location: string;
+  source: string;
+  generatedAt: string;
+  days: WeatherDay[];
+  error?: string;
+};
+
+const dayOrder = ["Thursday, June 11", "Friday, June 12", "Saturday, June 13", "Sunday, June 14"];
+
 function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
@@ -105,7 +127,11 @@ function getWinner(options: TripOption[]): WinnerResult {
 function getSummaryLabel(decision: TripDecision) {
   const winner = getWinner(decision.options);
 
-  if (winner.kind === "none") return "pending";
+  if (winner.kind === "none") {
+    const firstOption = decision.options[0];
+    return firstOption ? firstOption.title : "pending";
+  }
+
   if (winner.kind === "tie") {
     return `Tie: ${winner.options.map((option) => option.title).join(" / ")}`;
   }
@@ -136,6 +162,38 @@ function findOption(decisions: TripDecision[], decisionId: string | null, option
   return option || null;
 }
 
+function getDayKey(dateLabel: string) {
+  return dateLabel.replace(",", "");
+}
+
+function getWeatherForDecision(decision: TripDecision, weatherDays: WeatherDay[]) {
+  const target = getDayKey(decision.dateLabel);
+
+  return weatherDays.find((day) => {
+    const dayKey = day.dateLabel.replace(",", "");
+    return dayKey === target;
+  });
+}
+
+function formatWeatherTemp(day: WeatherDay) {
+  const high = day.highF === null ? "?" : `${day.highF}°`;
+  const low = day.lowF === null ? "?" : `${day.lowF}°`;
+  return `${high} / ${low}`;
+}
+
+function formatRain(day: WeatherDay) {
+  if (day.rainChance === null) return "Rain unknown";
+  return `${day.rainChance}% rain`;
+}
+
+function getDayIntro(dateLabel: string) {
+  if (dateLabel.startsWith("Thursday")) return "Arrive, settle in, dinner, and classic Cali salsa.";
+  if (dateLabel.startsWith("Friday")) return "Views, USA game, dinner, and a proper Friday night out.";
+  if (dateLabel.startsWith("Saturday")) return "Brunch, city walking, snacks, reset, then the big party.";
+  if (dateLabel.startsWith("Sunday")) return "Checkout, brunch, bags, and an easy final day.";
+  return "Weekend plan.";
+}
+
 export default function Home() {
   const [decisions, setDecisions] = useState<TripDecision[]>(initialDecisions);
   const [name, setName] = useState("");
@@ -152,14 +210,8 @@ export default function Home() {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [answerLoading, setAnswerLoading] = useState(false);
-
-  const currentPlan = useMemo(() => {
-    return decisions.map((decision) => ({
-      id: decision.id,
-      title: decision.title,
-      label: getSummaryLabel(decision),
-    }));
-  }, [decisions]);
+  const [weather, setWeather] = useState<WeatherResponse | null>(null);
+  const [weatherMessage, setWeatherMessage] = useState("Loading Cali weather...");
 
   const totalVotes = useMemo(() => {
     return decisions.reduce(
@@ -168,6 +220,24 @@ export default function Home() {
       0
     );
   }, [decisions]);
+
+  const groupedDecisions = useMemo(() => {
+    return dayOrder.map((dateLabel) => ({
+      dateLabel,
+      decisions: decisions.filter((decision) => decision.dateLabel === dateLabel),
+    }));
+  }, [decisions]);
+
+  const weekendSummary = useMemo(() => {
+    return groupedDecisions.map((group) => ({
+      dateLabel: group.dateLabel,
+      items: group.decisions.map((decision) => ({
+        id: decision.id,
+        title: decision.title,
+        label: getSummaryLabel(decision),
+      })),
+    }));
+  }, [groupedDecisions]);
 
   useEffect(() => {
     const savedName = cleanName(localStorage.getItem(NAME_STORAGE_KEY) || "");
@@ -225,6 +295,27 @@ export default function Home() {
     }
 
     loadBoard();
+  }, []);
+
+  useEffect(() => {
+    async function loadWeather() {
+      try {
+        const response = await fetch("/api/trip-weather", { cache: "no-store" });
+        const data = (await response.json()) as WeatherResponse;
+
+        if (!response.ok || data.error) {
+          setWeatherMessage(data.error || "Could not load weather.");
+          return;
+        }
+
+        setWeather(data);
+        setWeatherMessage(`Weather loaded from ${data.source}.`);
+      } catch (error) {
+        setWeatherMessage(error instanceof Error ? error.message : "Could not load weather.");
+      }
+    }
+
+    loadWeather();
   }, []);
 
   useEffect(() => {
@@ -598,36 +689,41 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-orange-50 via-rose-50 to-sky-50 text-stone-950">
+    <main className="min-h-screen bg-[#fff7ed] text-stone-950">
       <section className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-5 sm:px-6 lg:px-8">
-        <header className="overflow-hidden rounded-[2rem] border border-white/70 bg-white/80 shadow-xl shadow-orange-100/70 backdrop-blur">
-          <div
-            className="relative min-h-[360px] bg-cover bg-center px-5 py-7 text-white sm:px-8"
-            style={{ backgroundImage: `linear-gradient(110deg, rgba(159, 18, 57, 0.88), rgba(249, 115, 22, 0.7), rgba(2, 132, 199, 0.58)), url(${tripDetails.heroImagePath})` }}
-          >
-            <div className="absolute inset-0 bg-black/15" />
-            <div className="relative z-10 flex h-full min-h-[300px] flex-col justify-between gap-8">
+        <header className="overflow-hidden rounded-[2rem] border border-orange-100 bg-white shadow-xl shadow-orange-100/70">
+          <div className="grid gap-0 lg:grid-cols-[1.2fr_0.8fr]">
+            <div className="bg-gradient-to-br from-rose-700 via-orange-600 to-sky-700 px-6 py-8 text-white sm:px-9 lg:py-12">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="rounded-full bg-white/20 px-3 py-1 text-xs font-black uppercase tracking-[0.25em] backdrop-blur">{tripDetails.dates}</span>
                 <span className="rounded-full bg-white/20 px-3 py-1 text-xs font-black uppercase tracking-[0.25em] backdrop-blur">Cali, Colombia</span>
               </div>
 
-              <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-                <div>
-                  <h1 className="max-w-3xl text-4xl font-black tracking-tight sm:text-6xl">Current Cali Plan</h1>
-                  <p className="mt-3 max-w-2xl text-lg font-medium text-white/90">Vote on the options, add better ideas, and let the current winner rise to the top.</p>
-                </div>
-                <div className="rounded-2xl bg-white/15 p-4 text-sm backdrop-blur">
-                  <p className="font-bold">Signed in as</p>
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <span className="rounded-full bg-white px-3 py-1 font-bold text-rose-600">{name || "No name yet"}</span>
-                    <button className="rounded-full border border-white/50 px-3 py-1 font-semibold text-white" onClick={() => setShowNameModal(true)}>
-                      Change
-                    </button>
-                  </div>
-                  <p className="mt-2 text-xs text-white/80">Will can manage all options. Everyone else can manage their own.</p>
-                </div>
+              <div className="mt-16 max-w-3xl lg:mt-24">
+                <h1 className="text-5xl font-black tracking-tight sm:text-7xl">Cali Trip 2026</h1>
+                <p className="mt-4 max-w-2xl text-xl font-semibold text-white/90">
+                  Food, rooftop drinks, salsa, World Cup, and one proper Saturday night party.
+                </p>
               </div>
+
+              <div className="mt-8 rounded-2xl bg-white/15 p-4 text-sm backdrop-blur">
+                <p className="font-bold">Signed in as</p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="rounded-full bg-white px-3 py-1 font-bold text-rose-600">{name || "No name yet"}</span>
+                  <button className="rounded-full border border-white/50 px-3 py-1 font-semibold text-white" onClick={() => setShowNameModal(true)}>
+                    Change
+                  </button>
+                </div>
+                <p className="mt-2 text-xs text-white/80">Will can manage all options. Everyone else can manage their own.</p>
+              </div>
+            </div>
+
+            <div className="flex min-h-[280px] items-center justify-center bg-stone-950 p-4">
+              <img
+                src={tripDetails.heroImagePath}
+                alt="Cali trip"
+                className="max-h-[360px] w-full rounded-[1.5rem] object-contain shadow-2xl"
+              />
             </div>
           </div>
 
@@ -658,26 +754,72 @@ export default function Home() {
           </div>
         </header>
 
-        <section className="rounded-[2rem] border border-white/70 bg-white/85 p-5 shadow-lg shadow-orange-100/60 sm:p-7">
+        <section className="rounded-[2rem] border border-orange-100 bg-white p-5 shadow-lg shadow-orange-100/60 sm:p-7">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p className="text-sm font-bold uppercase tracking-wider text-orange-600">Weather</p>
+              <h2 className="text-3xl font-black">Cali forecast</h2>
+              <p className="mt-2 text-sm text-stone-600">{weatherMessage}</p>
+            </div>
+            <a className="text-sm font-bold text-rose-600 underline" href="https://open-meteo.com/" target="_blank" rel="noreferrer">
+              Open-Meteo
+            </a>
+          </div>
+
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {dayOrder.map((dateLabel) => {
+              const matchingDay = weather?.days.find((day) => day.dateLabel.replace(",", "") === dateLabel.replace(",", ""));
+
+              return (
+                <div key={dateLabel} className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
+                  <p className="text-xs font-black uppercase tracking-wider text-stone-500">{dateLabel}</p>
+                  {matchingDay ? (
+                    <>
+                      <div className="mt-3 flex items-center justify-between gap-3">
+                        <p className="text-3xl">{matchingDay.icon}</p>
+                        <p className="text-2xl font-black">{formatWeatherTemp(matchingDay)}</p>
+                      </div>
+                      <p className="mt-2 text-sm font-bold text-stone-800">{matchingDay.summary}</p>
+                      <p className="mt-1 text-xs font-semibold text-stone-500">{formatRain(matchingDay)}</p>
+                    </>
+                  ) : (
+                    <p className="mt-3 text-sm font-semibold text-stone-500">Forecast not available yet.</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="rounded-[2rem] border border-orange-100 bg-white p-5 shadow-lg shadow-orange-100/60 sm:p-7">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-sm font-bold uppercase tracking-wider text-rose-500">Top summary</p>
-              <h2 className="text-2xl font-black">Current winners</h2>
+              <p className="text-sm font-bold uppercase tracking-wider text-rose-500">Weekend at a glance</p>
+              <h2 className="text-3xl font-black">The plan so far</h2>
             </div>
-            <a className="text-sm font-bold text-rose-600 underline" href="#decisions">Jump to voting</a>
+            <a className="text-sm font-bold text-rose-600 underline" href="#days">Jump to days</a>
           </div>
-          <div className="mt-5 grid gap-3 md:grid-cols-2">
-            {currentPlan.map((item) => (
-              <a key={item.id} href={`#${item.id}`} className="rounded-2xl border border-stone-200 bg-white p-4 transition hover:-translate-y-0.5 hover:shadow-md">
-                <p className="font-black text-stone-900">{item.title}</p>
-                <p className="mt-1 text-sm font-semibold text-stone-600">{item.label}</p>
-              </a>
+
+          <div className="mt-5 grid gap-4 lg:grid-cols-4">
+            {weekendSummary.map((group) => (
+              <div key={group.dateLabel} className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
+                <p className="text-sm font-black text-stone-950">{group.dateLabel}</p>
+                <p className="mt-1 text-xs font-semibold text-stone-500">{getDayIntro(group.dateLabel)}</p>
+                <div className="mt-4 grid gap-2">
+                  {group.items.map((item) => (
+                    <a key={item.id} href={`#${item.id}`} className="rounded-xl bg-white p-3 text-sm hover:shadow-sm">
+                      <p className="font-black text-stone-900">{item.title}</p>
+                      <p className="mt-1 text-xs font-semibold text-stone-600">{item.label}</p>
+                    </a>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         </section>
 
         <section className="grid gap-4 lg:grid-cols-2">
-          <div className="rounded-[2rem] border border-white/70 bg-white/85 p-5 shadow-lg shadow-orange-100/60 sm:p-7">
+          <div className="rounded-[2rem] border border-orange-100 bg-white p-5 shadow-lg shadow-orange-100/60 sm:p-7">
             <p className="text-sm font-bold uppercase tracking-wider text-sky-600">Flights</p>
             <div className="mt-4 grid gap-3">
               {tripDetails.flights.map((flight) => (
@@ -704,15 +846,15 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="rounded-[2rem] border border-white/70 bg-white/85 p-5 shadow-lg shadow-orange-100/60 sm:p-7">
+          <div className="rounded-[2rem] border border-orange-100 bg-white p-5 shadow-lg shadow-orange-100/60 sm:p-7">
             <p className="text-sm font-bold uppercase tracking-wider text-purple-600">AI board editor</p>
             <h2 className="mt-1 text-2xl font-black">Edit the board with plain English</h2>
-            <p className="mt-2 text-sm text-stone-600">Try: “Add La Topa Tolondra for Friday night as a salsa club” or “remove the rooftop I added.” It previews before applying.</p>
+            <p className="mt-2 text-sm text-stone-600">Try: “Add a rooftop option for Friday afternoon” or “remove the option I added.” It previews before applying.</p>
             <textarea
               className="mt-4 min-h-24 w-full rounded-2xl border border-stone-200 bg-white p-3 text-sm outline-none focus:border-purple-400"
               value={aiCommand}
               onChange={(event) => setAiCommand(event.target.value)}
-              placeholder="Add La Topa Tolondra for Friday night as a salsa club..."
+              placeholder="Add a rooftop option for Friday afternoon..."
             />
             <div className="mt-3 flex flex-wrap gap-2">
               <button className="rounded-full bg-purple-600 px-5 py-2 text-sm font-black text-white disabled:opacity-50" onClick={requestAiEdit} disabled={aiLoading}>
@@ -728,16 +870,16 @@ export default function Home() {
           </div>
         </section>
 
-        <section className="rounded-[2rem] border border-white/70 bg-white/85 p-5 shadow-lg shadow-orange-100/60 sm:p-7">
+        <section className="rounded-[2rem] border border-orange-100 bg-white p-5 shadow-lg shadow-orange-100/60 sm:p-7">
           <p className="text-sm font-bold uppercase tracking-wider text-orange-600">Ask the board</p>
           <h2 className="mt-1 text-2xl font-black">Trip Q&A</h2>
-          <p className="mt-2 text-sm text-stone-600">Use this for questions about the trip, flights, apartment, or what is currently winning.</p>
+          <p className="mt-2 text-sm text-stone-600">Use this for questions about the trip, flights, apartment, weather, or what is currently winning.</p>
           <div className="mt-4 flex flex-col gap-3 sm:flex-row">
             <input
               className="min-h-11 flex-1 rounded-full border border-stone-200 bg-white px-4 text-sm outline-none focus:border-orange-400"
               value={question}
               onChange={(event) => setQuestion(event.target.value)}
-              placeholder="What is winning for Friday night?"
+              placeholder="What is the plan for Saturday?"
             />
             <button className="rounded-full bg-orange-500 px-5 py-2 text-sm font-black text-white disabled:opacity-50" onClick={askTripQuestion} disabled={answerLoading}>
               {answerLoading ? "Answering..." : "Ask"}
@@ -746,128 +888,157 @@ export default function Home() {
           {answer ? <p className="mt-4 whitespace-pre-line rounded-2xl bg-orange-50 p-4 text-sm font-medium text-stone-800">{answer}</p> : null}
         </section>
 
-        <section id="decisions" className="grid gap-5">
-          {decisions.map((decision) => {
-            const winner = getWinner(decision.options);
-            const rankedOptions = rankOptions(decision.options);
-            const userVote = decision.options.find((option) => option.votes.includes(name));
-            const draft = draftByDecision[decision.id] ?? emptyDraft();
-
-            return (
-              <article key={decision.id} id={decision.id} className="scroll-mt-6 rounded-[2rem] border border-white/70 bg-white/90 p-5 shadow-lg shadow-orange-100/60 sm:p-7">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded-full bg-rose-100 px-3 py-1 text-xs font-black uppercase tracking-wider text-rose-700">{decision.dateLabel}</span>
-                      <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-black uppercase tracking-wider text-sky-700">{decision.timeLabel}</span>
-                      <span className={`rounded-full px-3 py-1 text-xs font-black uppercase tracking-wider ${decision.status === "Locked" ? "bg-stone-200 text-stone-700" : "bg-lime-100 text-lime-700"}`}>{decision.status}</span>
-                    </div>
-                    <h2 className="mt-3 text-2xl font-black sm:text-3xl">{decision.title}</h2>
-                    <p className="mt-2 max-w-2xl text-sm text-stone-600">{decision.description}</p>
-                  </div>
-
-                  <div className="rounded-2xl bg-stone-950 p-4 text-white lg:min-w-80">
-                    <p className="text-xs font-bold uppercase tracking-wider text-white/60">Current winner</p>
-                    {winner.kind === "none" ? (
-                      <p className="mt-2 text-xl font-black">No votes yet</p>
-                    ) : null}
-                    {winner.kind === "winner" ? (
-                      <>
-                        <p className="mt-2 text-xl font-black">{winner.option.title}</p>
-                        <p className="text-sm text-white/70">{winner.votes} vote{winner.votes === 1 ? "" : "s"}</p>
-                      </>
-                    ) : null}
-                    {winner.kind === "tie" ? (
-                      <>
-                        <p className="mt-2 text-xl font-black">Tie</p>
-                        <p className="text-sm text-white/70">{winner.options.map((option) => option.title).join(" / ")} · {winner.votes} vote{winner.votes === 1 ? "" : "s"} each</p>
-                      </>
-                    ) : null}
-                    {userVote ? <p className="mt-3 text-xs font-bold text-lime-300">Your vote: {userVote.title}</p> : null}
-                  </div>
+        <section id="days" className="grid gap-6">
+          {groupedDecisions.map((group) => (
+            <div key={group.dateLabel} className="rounded-[2rem] border border-orange-100 bg-white p-4 shadow-lg shadow-orange-100/60 sm:p-6">
+              <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <p className="text-sm font-bold uppercase tracking-wider text-rose-500">Day plan</p>
+                  <h2 className="text-3xl font-black">{group.dateLabel}</h2>
+                  <p className="mt-1 text-sm text-stone-600">{getDayIntro(group.dateLabel)}</p>
                 </div>
-
-                <div className="mt-5 grid gap-3">
-                  {rankedOptions.length === 0 ? (
-                    <div className="rounded-2xl border border-dashed border-stone-300 bg-stone-50 p-5 text-center text-sm font-semibold text-stone-500">No options yet. Add the first idea.</div>
-                  ) : null}
-
-                  {rankedOptions.map((option, index) => {
-                    const hasMyVote = option.votes.includes(name);
-                    const canManage = canManageOption(option, name);
-
-                    return (
-                      <div key={option.id} className={`rounded-2xl border p-4 ${hasMyVote ? "border-rose-300 bg-rose-50" : "border-stone-200 bg-white"}`}>
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                          <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="rounded-full bg-stone-100 px-2.5 py-1 text-xs font-black text-stone-600">#{index + 1}</span>
-                              <span className="rounded-full bg-orange-100 px-2.5 py-1 text-xs font-black text-orange-700">{option.category}</span>
-                              <span className="text-xs font-semibold text-stone-500">Suggested by {option.suggestedBy}</span>
-                            </div>
-                            <h3 className="mt-2 text-xl font-black">{option.title}</h3>
-                            {option.description ? <p className="mt-1 text-sm text-stone-600">{option.description}</p> : null}
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              {option.url ? <a className="rounded-full bg-stone-100 px-3 py-1 text-xs font-black text-stone-700 underline" href={option.url} target="_blank" rel="noreferrer">Open link</a> : null}
-                              {option.mapsUrl ? <a className="rounded-full bg-stone-100 px-3 py-1 text-xs font-black text-stone-700 underline" href={option.mapsUrl} target="_blank" rel="noreferrer">Google Maps</a> : null}
-                            </div>
-                          </div>
-                          <div className="flex shrink-0 flex-col gap-2 sm:items-end">
-                            <p className="text-sm font-black text-stone-900">{option.votes.length} vote{option.votes.length === 1 ? "" : "s"}</p>
-                            <button
-                              className={`rounded-full px-5 py-2 text-sm font-black ${hasMyVote ? "bg-rose-600 text-white" : "bg-stone-950 text-white"} disabled:cursor-not-allowed disabled:opacity-50`}
-                              onClick={() => vote(decision.id, option.id)}
-                              disabled={decision.status === "Locked"}
-                            >
-                              {hasMyVote ? "Voted" : "Vote"}
-                            </button>
-                            {canManage ? (
-                              <button
-                                className="rounded-full border border-stone-300 bg-white px-4 py-1.5 text-xs font-black text-stone-600"
-                                onClick={() => deleteOption(decision.id, option.id)}
-                                disabled={decision.status === "Locked"}
-                              >
-                                Delete
-                              </button>
-                            ) : null}
-                          </div>
-                        </div>
-                        <p className="mt-3 text-xs font-semibold text-stone-500">{option.votes.length > 0 ? `Voted: ${option.votes.join(", ")}` : "No votes yet"}</p>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div className="mt-5 flex flex-wrap gap-2">
-                  <button className="rounded-full bg-rose-600 px-5 py-2 text-sm font-black text-white" onClick={() => setOpenAddFormId(openAddFormId === decision.id ? null : decision.id)}>
-                    {openAddFormId === decision.id ? "Close add form" : "Add an option"}
-                  </button>
-                  {userVote ? (
-                    <button className="rounded-full border border-stone-300 bg-white px-5 py-2 text-sm font-black text-stone-700 disabled:opacity-50" onClick={() => removeMyVote(decision.id)} disabled={decision.status === "Locked"}>
-                      Remove my vote
-                    </button>
-                  ) : null}
-                </div>
-
-                {openAddFormId === decision.id ? (
-                  <div className="mt-4 rounded-2xl border border-stone-200 bg-stone-50 p-4">
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <input className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm outline-none focus:border-rose-400" value={draft.title} onChange={(event) => updateDraft(decision.id, { title: event.target.value })} placeholder="Option title" />
-                      <select className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm outline-none focus:border-rose-400" value={draft.category} onChange={(event) => updateDraft(decision.id, { category: event.target.value as OptionCategory })}>
-                        {optionCategories.map((category) => <option key={category} value={category}>{category}</option>)}
-                      </select>
-                      <input className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm outline-none focus:border-rose-400" value={draft.url} onChange={(event) => updateDraft(decision.id, { url: event.target.value })} placeholder="Optional website or event URL" />
-                      <input className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm outline-none focus:border-rose-400" value={draft.mapsUrl} onChange={(event) => updateDraft(decision.id, { mapsUrl: event.target.value })} placeholder="Optional Google Maps URL" />
-                    </div>
-                    <textarea className="mt-3 min-h-20 w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm outline-none focus:border-rose-400" value={draft.description} onChange={(event) => updateDraft(decision.id, { description: event.target.value })} placeholder="Quick description" />
-                    <button className="mt-3 rounded-full bg-stone-950 px-5 py-2 text-sm font-black text-white" onClick={() => addOption(decision.id)}>
-                      Save option
-                    </button>
+                {weather?.days.find((day) => day.dateLabel.replace(",", "") === group.dateLabel.replace(",", "")) ? (
+                  <div className="rounded-2xl bg-stone-950 px-4 py-3 text-sm font-bold text-white">
+                    {(() => {
+                      const day = weather.days.find((weatherDay) => weatherDay.dateLabel.replace(",", "") === group.dateLabel.replace(",", ""));
+                      return day ? `${day.icon} ${formatWeatherTemp(day)} · ${formatRain(day)}` : "";
+                    })()}
                   </div>
                 ) : null}
-              </article>
-            );
-          })}
+              </div>
+
+              <div className="grid gap-4">
+                {group.decisions.map((decision) => {
+                  const winner = getWinner(decision.options);
+                  const rankedOptions = rankOptions(decision.options);
+                  const userVote = decision.options.find((option) => option.votes.includes(name));
+                  const draft = draftByDecision[decision.id] ?? emptyDraft();
+                  const decisionWeather = weather ? getWeatherForDecision(decision, weather.days) : undefined;
+
+                  return (
+                    <article key={decision.id} id={decision.id} className="scroll-mt-6 rounded-[1.5rem] border border-stone-200 bg-white p-4 sm:p-5">
+                      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-black uppercase tracking-wider text-sky-700">{decision.timeLabel}</span>
+                            <span className={`rounded-full px-3 py-1 text-xs font-black uppercase tracking-wider ${decision.status === "Locked" ? "bg-stone-200 text-stone-700" : "bg-lime-100 text-lime-700"}`}>{decision.status}</span>
+                            {decisionWeather ? (
+                              <span className="rounded-full bg-orange-100 px-3 py-1 text-xs font-black uppercase tracking-wider text-orange-700">
+                                {decisionWeather.icon} {formatWeatherTemp(decisionWeather)} · {formatRain(decisionWeather)}
+                              </span>
+                            ) : null}
+                          </div>
+                          <h3 className="mt-3 text-2xl font-black">{decision.title}</h3>
+                          <p className="mt-2 max-w-2xl text-sm text-stone-600">{decision.description}</p>
+                        </div>
+
+                        <div className="rounded-2xl bg-stone-950 p-4 text-white lg:min-w-72">
+                          <p className="text-xs font-bold uppercase tracking-wider text-white/60">Current winner</p>
+                          {winner.kind === "none" ? (
+                            <p className="mt-2 text-xl font-black">No votes yet</p>
+                          ) : null}
+                          {winner.kind === "winner" ? (
+                            <>
+                              <p className="mt-2 text-xl font-black">{winner.option.title}</p>
+                              <p className="text-sm text-white/70">{winner.votes} vote{winner.votes === 1 ? "" : "s"}</p>
+                            </>
+                          ) : null}
+                          {winner.kind === "tie" ? (
+                            <>
+                              <p className="mt-2 text-xl font-black">Tie</p>
+                              <p className="text-sm text-white/70">{winner.options.map((option) => option.title).join(" / ")} · {winner.votes} vote{winner.votes === 1 ? "" : "s"} each</p>
+                            </>
+                          ) : null}
+                          {userVote ? <p className="mt-3 text-xs font-bold text-lime-300">Your vote: {userVote.title}</p> : null}
+                        </div>
+                      </div>
+
+                      <div className="mt-5 grid gap-3">
+                        {rankedOptions.length === 0 ? (
+                          <div className="rounded-2xl border border-dashed border-stone-300 bg-stone-50 p-5 text-center text-sm font-semibold text-stone-500">No options yet. Add the first idea.</div>
+                        ) : null}
+
+                        {rankedOptions.map((option, index) => {
+                          const hasMyVote = option.votes.includes(name);
+                          const canManage = canManageOption(option, name);
+                          const isActionItem = option.description.toLowerCase().includes("action item");
+
+                          return (
+                            <div key={option.id} className={`rounded-2xl border p-4 ${hasMyVote ? "border-rose-300 bg-rose-50" : "border-stone-200 bg-stone-50"}`}>
+                              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                <div className="min-w-0">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-stone-600">#{index + 1}</span>
+                                    <span className="rounded-full bg-orange-100 px-2.5 py-1 text-xs font-black text-orange-700">{option.category}</span>
+                                    {isActionItem ? <span className="rounded-full bg-rose-600 px-2.5 py-1 text-xs font-black text-white">Action needed</span> : null}
+                                    <span className="text-xs font-semibold text-stone-500">Suggested by {option.suggestedBy}</span>
+                                  </div>
+                                  <h4 className="mt-2 text-xl font-black">{option.title}</h4>
+                                  {option.description ? <p className="mt-1 text-sm text-stone-600">{option.description}</p> : null}
+                                  <div className="mt-3 flex flex-wrap gap-2">
+                                    {option.url ? <a className="rounded-full bg-white px-3 py-1 text-xs font-black text-stone-700 underline" href={option.url} target="_blank" rel="noreferrer">Open link</a> : null}
+                                    {option.mapsUrl ? <a className="rounded-full bg-white px-3 py-1 text-xs font-black text-stone-700 underline" href={option.mapsUrl} target="_blank" rel="noreferrer">Google Maps</a> : null}
+                                  </div>
+                                </div>
+                                <div className="flex shrink-0 flex-col gap-2 sm:items-end">
+                                  <p className="text-sm font-black text-stone-900">{option.votes.length} vote{option.votes.length === 1 ? "" : "s"}</p>
+                                  <button
+                                    className={`rounded-full px-5 py-2 text-sm font-black ${hasMyVote ? "bg-rose-600 text-white" : "bg-stone-950 text-white"} disabled:cursor-not-allowed disabled:opacity-50`}
+                                    onClick={() => vote(decision.id, option.id)}
+                                    disabled={decision.status === "Locked"}
+                                  >
+                                    {hasMyVote ? "Voted" : "Vote"}
+                                  </button>
+                                  {canManage ? (
+                                    <button
+                                      className="rounded-full border border-stone-300 bg-white px-4 py-1.5 text-xs font-black text-stone-600"
+                                      onClick={() => deleteOption(decision.id, option.id)}
+                                      disabled={decision.status === "Locked"}
+                                    >
+                                      Delete
+                                    </button>
+                                  ) : null}
+                                </div>
+                              </div>
+                              <p className="mt-3 text-xs font-semibold text-stone-500">{option.votes.length > 0 ? `Voted: ${option.votes.join(", ")}` : "No votes yet"}</p>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <div className="mt-5 flex flex-wrap gap-2">
+                        <button className="rounded-full bg-rose-600 px-5 py-2 text-sm font-black text-white" onClick={() => setOpenAddFormId(openAddFormId === decision.id ? null : decision.id)}>
+                          {openAddFormId === decision.id ? "Close add form" : "Add an option"}
+                        </button>
+                        {userVote ? (
+                          <button className="rounded-full border border-stone-300 bg-white px-5 py-2 text-sm font-black text-stone-700 disabled:opacity-50" onClick={() => removeMyVote(decision.id)} disabled={decision.status === "Locked"}>
+                            Remove my vote
+                          </button>
+                        ) : null}
+                      </div>
+
+                      {openAddFormId === decision.id ? (
+                        <div className="mt-4 rounded-2xl border border-stone-200 bg-stone-50 p-4">
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <input className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm outline-none focus:border-rose-400" value={draft.title} onChange={(event) => updateDraft(decision.id, { title: event.target.value })} placeholder="Option title" />
+                            <select className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm outline-none focus:border-rose-400" value={draft.category} onChange={(event) => updateDraft(decision.id, { category: event.target.value as OptionCategory })}>
+                              {optionCategories.map((category) => <option key={category} value={category}>{category}</option>)}
+                            </select>
+                            <input className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm outline-none focus:border-rose-400" value={draft.url} onChange={(event) => updateDraft(decision.id, { url: event.target.value })} placeholder="Optional website or event URL" />
+                            <input className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm outline-none focus:border-rose-400" value={draft.mapsUrl} onChange={(event) => updateDraft(decision.id, { mapsUrl: event.target.value })} placeholder="Optional Google Maps URL" />
+                          </div>
+                          <textarea className="mt-3 min-h-20 w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm outline-none focus:border-rose-400" value={draft.description} onChange={(event) => updateDraft(decision.id, { description: event.target.value })} placeholder="Quick description" />
+                          <button className="mt-3 rounded-full bg-stone-950 px-5 py-2 text-sm font-black text-white" onClick={() => addOption(decision.id)}>
+                            Save option
+                          </button>
+                        </div>
+                      ) : null}
+                    </article>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </section>
       </section>
 
