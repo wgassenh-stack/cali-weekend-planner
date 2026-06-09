@@ -131,11 +131,7 @@ function canManageOption(option: TripOption, currentUser: string) {
 }
 
 function rankOptions(options: TripOption[]) {
-  return [...options].sort((a, b) => {
-    const voteDiff = b.votes.length - a.votes.length;
-    if (voteDiff !== 0) return voteDiff;
-    return a.title.localeCompare(b.title);
-  });
+  return [...options].sort((a, b) => b.votes.length - a.votes.length);
 }
 
 function getWinner(options: TripOption[]): WinnerResult {
