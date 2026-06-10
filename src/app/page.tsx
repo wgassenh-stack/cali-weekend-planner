@@ -20,6 +20,17 @@ type WinnerResult =
   | { kind: "winner"; option: TripOption; votes: number }
   | { kind: "tie"; options: TripOption[]; votes: number };
 
+type OptionComment = {
+  id: string;
+  author: string;
+  text: string;
+  createdAt: string;
+};
+
+type TripOptionWithComments = TripOption & {
+  comments?: OptionComment[];
+};
+
 type AiEditOperation = {
   type: "add_option" | "update_option" | "delete_option" | "lock_decision" | "unlock_decision";
   decisionId: string | null;
@@ -187,6 +198,25 @@ function getOptionKey(decisionId: string, optionId: string) {
   return `${decisionId}:${optionId}`;
 }
 
+function getOptionComments(option: TripOption) {
+  return ((option as TripOptionWithComments).comments ?? []).filter(
+    (comment) => comment && typeof comment.text === "string"
+  );
+}
+
+function formatCommentTime(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "";
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
 function getWeatherForDateLabel(dateLabel: string, weatherDays: WeatherDay[]) {
   const isoDate = dateLabelToIsoDate[dateLabel];
   if (!isoDate) return undefined;
@@ -251,6 +281,7 @@ export default function Home() {
   const [draftByDecision, setDraftByDecision] = useState<Record<string, NewOptionDraft>>({});
   const [editingOptionKey, setEditingOptionKey] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<NewOptionDraft>(emptyDraft());
+  const [commentDraftByOption, setCommentDraftByOption] = useState<Record<string, string>>({});
   const [aiCommand, setAiCommand] = useState("");
   const [aiMessage, setAiMessage] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
@@ -459,6 +490,13 @@ export default function Home() {
     }));
   }
 
+  function updateCommentDraft(optionKey: string, value: string) {
+    setCommentDraftByOption((current) => ({
+      ...current,
+      [optionKey]: value,
+    }));
+  }
+
   function startEditOption(decisionId: string, option: TripOption) {
     const currentUser = cleanName(name);
 
@@ -505,7 +543,7 @@ export default function Home() {
           options: decision.options.map((item) => {
             if (item.id !== optionId) return item;
 
-            const updatedOption: TripOption = {
+            const updatedOption: TripOptionWithComments = {
               ...item,
               title,
               description: editDraft.description.trim(),
@@ -533,6 +571,51 @@ export default function Home() {
     cancelEditOption();
   }
 
+  function addComment(decisionId: string, optionId: string) {
+    const author = cleanName(name);
+    const optionKey = getOptionKey(decisionId, optionId);
+    const text = (commentDraftByOption[optionKey] || "").trim();
+
+    if (!author) {
+      setShowNameModal(true);
+      return;
+    }
+
+    if (!text) return;
+
+    const newComment: OptionComment = {
+      id: makeId("comment"),
+      author,
+      text,
+      createdAt: new Date().toISOString(),
+    };
+
+    setDecisions((current) =>
+      current.map((decision) => {
+        if (decision.id !== decisionId) return decision;
+
+        return {
+          ...decision,
+          options: decision.options.map((item) => {
+            if (item.id !== optionId) return item;
+
+            const optionWithComments = item as TripOptionWithComments;
+
+            return {
+              ...optionWithComments,
+              comments: [...(optionWithComments.comments ?? []), newComment],
+            };
+          }),
+        };
+      })
+    );
+
+    setCommentDraftByOption((current) => ({
+      ...current,
+      [optionKey]: "",
+    }));
+  }
+
   function addOption(decisionId: string) {
     const voter = cleanName(name);
 
@@ -546,13 +629,14 @@ export default function Home() {
 
     if (!title) return;
 
-    const newOption: TripOption = {
+    const newOption: TripOptionWithComments = {
       id: makeId("option"),
       title,
       description: draft.description.trim(),
       category: draft.category,
       suggestedBy: voter,
       votes: [],
+      comments: [],
     };
 
     if (draft.url.trim()) newOption.url = draft.url.trim();
@@ -622,13 +706,14 @@ export default function Home() {
           next = next.map((decision) => {
             if (decision.id !== operation.decisionId) return decision;
 
-            const newOption: TripOption = {
+            const newOption: TripOptionWithComments = {
               id: makeId("option"),
               title,
               description: operation.description?.trim() || "",
               category: operation.category || "other",
               suggestedBy: operation.suggestedBy?.trim() || fallbackName,
               votes: [],
+              comments: [],
             };
 
             if (operation.url?.trim()) newOption.url = operation.url.trim();
@@ -656,8 +741,8 @@ export default function Home() {
               options: decision.options.map((item) => {
                 if (item.id !== operation.optionId) return item;
 
-                const updatedOption: TripOption = {
-                  ...item,
+                const updatedOption: TripOptionWithComments = {
+                  ...(item as TripOptionWithComments),
                   title: operation.title?.trim() || item.title,
                   description: operation.description?.trim() ?? item.description,
                   category: operation.category || item.category,
@@ -1101,6 +1186,8 @@ export default function Home() {
                           const isActionItem = option.description.toLowerCase().includes("action item");
                           const optionKey = getOptionKey(decision.id, option.id);
                           const isEditing = editingOptionKey === optionKey;
+                          const comments = getOptionComments(option);
+                          const commentDraft = commentDraftByOption[optionKey] || "";
 
                           return (
                             <div key={option.id} className={`rounded-2xl border p-4 ${hasMyVote ? "border-rose-300 bg-rose-50" : "border-stone-200 bg-stone-50"}`}>
@@ -1200,7 +1287,52 @@ export default function Home() {
                               )}
 
                               {!isEditing ? (
-                                <p className="mt-3 text-xs font-semibold text-stone-500">{option.votes.length > 0 ? `Voted: ${option.votes.join(", ")}` : "No votes yet"}</p>
+                                <>
+                                  <p className="mt-3 text-xs font-semibold text-stone-500">{option.votes.length > 0 ? `Voted: ${option.votes.join(", ")}` : "No votes yet"}</p>
+
+                                  <div className="mt-4 rounded-2xl border border-stone-200 bg-white p-3">
+                                    <div className="flex items-center justify-between gap-3">
+                                      <p className="text-xs font-black uppercase tracking-wider text-stone-500">
+                                        Comments {comments.length > 0 ? `(${comments.length})` : ""}
+                                      </p>
+                                    </div>
+
+                                    {comments.length > 0 ? (
+                                      <div className="mt-3 grid gap-2">
+                                        {comments.map((comment) => (
+                                          <div key={comment.id} className="rounded-xl bg-stone-50 p-3">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <p className="text-sm font-black text-stone-900">{comment.author}</p>
+                                              <p className="text-xs font-semibold text-stone-400">{formatCommentTime(comment.createdAt)}</p>
+                                            </div>
+                                            <p className="mt-1 whitespace-pre-line text-sm text-stone-700">{comment.text}</p>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <p className="mt-2 text-sm text-stone-500">No comments yet.</p>
+                                    )}
+
+                                    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                                      <input
+                                        className="min-h-10 flex-1 rounded-full border border-stone-200 bg-white px-4 text-sm outline-none focus:border-rose-400"
+                                        value={commentDraft}
+                                        onChange={(event) => updateCommentDraft(optionKey, event.target.value)}
+                                        placeholder="Add a comment..."
+                                        onKeyDown={(event) => {
+                                          if (event.key === "Enter") addComment(decision.id, option.id);
+                                        }}
+                                      />
+                                      <button
+                                        className="rounded-full bg-stone-950 px-4 py-2 text-sm font-black text-white disabled:opacity-50"
+                                        onClick={() => addComment(decision.id, option.id)}
+                                        disabled={!commentDraft.trim()}
+                                      >
+                                        Comment
+                                      </button>
+                                    </div>
+                                  </div>
+                                </>
                               ) : null}
                             </div>
                           );
