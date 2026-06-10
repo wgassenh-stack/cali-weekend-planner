@@ -183,6 +183,10 @@ function findOption(decisions: TripDecision[], decisionId: string | null, option
   return option || null;
 }
 
+function getOptionKey(decisionId: string, optionId: string) {
+  return `${decisionId}:${optionId}`;
+}
+
 function getWeatherForDateLabel(dateLabel: string, weatherDays: WeatherDay[]) {
   const isoDate = dateLabelToIsoDate[dateLabel];
   if (!isoDate) return undefined;
@@ -245,6 +249,8 @@ export default function Home() {
   const [syncMessage, setSyncMessage] = useState("Loading shared board...");
   const [openAddFormId, setOpenAddFormId] = useState<string | null>(null);
   const [draftByDecision, setDraftByDecision] = useState<Record<string, NewOptionDraft>>({});
+  const [editingOptionKey, setEditingOptionKey] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<NewOptionDraft>(emptyDraft());
   const [aiCommand, setAiCommand] = useState("");
   const [aiMessage, setAiMessage] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
@@ -446,6 +452,87 @@ export default function Home() {
     }));
   }
 
+  function updateEditDraft(updates: Partial<NewOptionDraft>) {
+    setEditDraft((current) => ({
+      ...current,
+      ...updates,
+    }));
+  }
+
+  function startEditOption(decisionId: string, option: TripOption) {
+    const currentUser = cleanName(name);
+
+    if (!currentUser) {
+      setShowNameModal(true);
+      return;
+    }
+
+    if (!canManageOption(option, currentUser)) return;
+
+    setEditingOptionKey(getOptionKey(decisionId, option.id));
+    setEditDraft({
+      title: option.title,
+      description: option.description,
+      category: option.category,
+      url: option.url || "",
+      mapsUrl: option.mapsUrl || "",
+    });
+  }
+
+  function cancelEditOption() {
+    setEditingOptionKey(null);
+    setEditDraft(emptyDraft());
+  }
+
+  function saveEditedOption(decisionId: string, optionId: string) {
+    const currentUser = cleanName(name);
+    const option = findOption(decisions, decisionId, optionId);
+    const title = editDraft.title.trim();
+
+    if (!currentUser) {
+      setShowNameModal(true);
+      return;
+    }
+
+    if (!option || !canManageOption(option, currentUser) || !title) return;
+
+    setDecisions((current) =>
+      current.map((decision) => {
+        if (decision.id !== decisionId) return decision;
+
+        return {
+          ...decision,
+          options: decision.options.map((item) => {
+            if (item.id !== optionId) return item;
+
+            const updatedOption: TripOption = {
+              ...item,
+              title,
+              description: editDraft.description.trim(),
+              category: editDraft.category,
+            };
+
+            if (editDraft.url.trim()) {
+              updatedOption.url = editDraft.url.trim();
+            } else {
+              delete updatedOption.url;
+            }
+
+            if (editDraft.mapsUrl.trim()) {
+              updatedOption.mapsUrl = editDraft.mapsUrl.trim();
+            } else {
+              delete updatedOption.mapsUrl;
+            }
+
+            return updatedOption;
+          }),
+        };
+      })
+    );
+
+    cancelEditOption();
+  }
+
   function addOption(decisionId: string) {
     const voter = cleanName(name);
 
@@ -569,14 +656,17 @@ export default function Home() {
               options: decision.options.map((item) => {
                 if (item.id !== operation.optionId) return item;
 
-                return {
+                const updatedOption: TripOption = {
                   ...item,
                   title: operation.title?.trim() || item.title,
                   description: operation.description?.trim() ?? item.description,
                   category: operation.category || item.category,
-                  url: operation.url?.trim() || item.url,
-                  mapsUrl: operation.mapsUrl?.trim() || item.mapsUrl,
                 };
+
+                if (operation.url?.trim()) updatedOption.url = operation.url.trim();
+                if (operation.mapsUrl?.trim()) updatedOption.mapsUrl = operation.mapsUrl.trim();
+
+                return updatedOption;
               }),
             };
           });
@@ -1009,45 +1099,109 @@ export default function Home() {
                           const hasMyVote = option.votes.includes(name);
                           const canManage = canManageOption(option, name);
                           const isActionItem = option.description.toLowerCase().includes("action item");
+                          const optionKey = getOptionKey(decision.id, option.id);
+                          const isEditing = editingOptionKey === optionKey;
 
                           return (
                             <div key={option.id} className={`rounded-2xl border p-4 ${hasMyVote ? "border-rose-300 bg-rose-50" : "border-stone-200 bg-stone-50"}`}>
-                              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                <div className="min-w-0">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <span className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-stone-600">#{index + 1}</span>
-                                    <span className="rounded-full bg-orange-100 px-2.5 py-1 text-xs font-black text-orange-700">{option.category}</span>
-                                    {isActionItem ? <span className="rounded-full bg-rose-600 px-2.5 py-1 text-xs font-black text-white">Action needed</span> : null}
-                                    <span className="text-xs font-semibold text-stone-500">Suggested by {option.suggestedBy}</span>
+                              {isEditing ? (
+                                <div>
+                                  <div className="grid gap-3 sm:grid-cols-2">
+                                    <input
+                                      className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm font-semibold outline-none focus:border-rose-400"
+                                      value={editDraft.title}
+                                      onChange={(event) => updateEditDraft({ title: event.target.value })}
+                                      placeholder="Option title"
+                                    />
+                                    <select
+                                      className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm outline-none focus:border-rose-400"
+                                      value={editDraft.category}
+                                      onChange={(event) => updateEditDraft({ category: event.target.value as OptionCategory })}
+                                    >
+                                      {optionCategories.map((category) => (
+                                        <option key={category} value={category}>
+                                          {category}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <input
+                                      className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm outline-none focus:border-rose-400"
+                                      value={editDraft.url}
+                                      onChange={(event) => updateEditDraft({ url: event.target.value })}
+                                      placeholder="Optional website or event URL"
+                                    />
+                                    <input
+                                      className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm outline-none focus:border-rose-400"
+                                      value={editDraft.mapsUrl}
+                                      onChange={(event) => updateEditDraft({ mapsUrl: event.target.value })}
+                                      placeholder="Optional Google Maps URL"
+                                    />
                                   </div>
-                                  <h4 className="mt-2 text-xl font-black">{option.title}</h4>
-                                  {option.description ? <p className="mt-1 text-sm text-stone-600">{option.description}</p> : null}
+                                  <textarea
+                                    className="mt-3 min-h-24 w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm outline-none focus:border-rose-400"
+                                    value={editDraft.description}
+                                    onChange={(event) => updateEditDraft({ description: event.target.value })}
+                                    placeholder="Quick description"
+                                  />
                                   <div className="mt-3 flex flex-wrap gap-2">
-                                    {option.url ? <a className="rounded-full bg-white px-3 py-1 text-xs font-black text-stone-700 underline" href={option.url} target="_blank" rel="noreferrer">Open link</a> : null}
-                                    {option.mapsUrl ? <a className="rounded-full bg-white px-3 py-1 text-xs font-black text-stone-700 underline" href={option.mapsUrl} target="_blank" rel="noreferrer">Google Maps</a> : null}
+                                    <button className="rounded-full bg-stone-950 px-5 py-2 text-sm font-black text-white" onClick={() => saveEditedOption(decision.id, option.id)}>
+                                      Save changes
+                                    </button>
+                                    <button className="rounded-full border border-stone-300 bg-white px-5 py-2 text-sm font-black text-stone-700" onClick={cancelEditOption}>
+                                      Cancel
+                                    </button>
                                   </div>
                                 </div>
-                                <div className="flex shrink-0 flex-col gap-2 sm:items-end">
-                                  <p className="text-sm font-black text-stone-900">{option.votes.length} vote{option.votes.length === 1 ? "" : "s"}</p>
-                                  <button
-                                    className={`rounded-full px-5 py-2 text-sm font-black ${hasMyVote ? "bg-rose-600 text-white" : "bg-stone-950 text-white"} disabled:cursor-not-allowed disabled:opacity-50`}
-                                    onClick={() => vote(decision.id, option.id)}
-                                    disabled={decision.status === "Locked"}
-                                  >
-                                    {hasMyVote ? "Voted" : "Vote"}
-                                  </button>
-                                  {canManage ? (
+                              ) : (
+                                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                  <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-stone-600">#{index + 1}</span>
+                                      <span className="rounded-full bg-orange-100 px-2.5 py-1 text-xs font-black text-orange-700">{option.category}</span>
+                                      {isActionItem ? <span className="rounded-full bg-rose-600 px-2.5 py-1 text-xs font-black text-white">Action needed</span> : null}
+                                      <span className="text-xs font-semibold text-stone-500">Suggested by {option.suggestedBy}</span>
+                                    </div>
+                                    <h4 className="mt-2 text-xl font-black">{option.title}</h4>
+                                    {option.description ? <p className="mt-1 text-sm text-stone-600">{option.description}</p> : null}
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                      {option.url ? <a className="rounded-full bg-white px-3 py-1 text-xs font-black text-stone-700 underline" href={option.url} target="_blank" rel="noreferrer">Open link</a> : null}
+                                      {option.mapsUrl ? <a className="rounded-full bg-white px-3 py-1 text-xs font-black text-stone-700 underline" href={option.mapsUrl} target="_blank" rel="noreferrer">Google Maps</a> : null}
+                                    </div>
+                                  </div>
+                                  <div className="flex shrink-0 flex-col gap-2 sm:items-end">
+                                    <p className="text-sm font-black text-stone-900">{option.votes.length} vote{option.votes.length === 1 ? "" : "s"}</p>
                                     <button
-                                      className="rounded-full border border-stone-300 bg-white px-4 py-1.5 text-xs font-black text-stone-600"
-                                      onClick={() => deleteOption(decision.id, option.id)}
+                                      className={`rounded-full px-5 py-2 text-sm font-black ${hasMyVote ? "bg-rose-600 text-white" : "bg-stone-950 text-white"} disabled:cursor-not-allowed disabled:opacity-50`}
+                                      onClick={() => vote(decision.id, option.id)}
                                       disabled={decision.status === "Locked"}
                                     >
-                                      Delete
+                                      {hasMyVote ? "Voted" : "Vote"}
                                     </button>
-                                  ) : null}
+                                    {canManage ? (
+                                      <>
+                                        <button
+                                          className="rounded-full border border-stone-300 bg-white px-4 py-1.5 text-xs font-black text-stone-600"
+                                          onClick={() => startEditOption(decision.id, option)}
+                                          disabled={decision.status === "Locked"}
+                                        >
+                                          Edit
+                                        </button>
+                                        <button
+                                          className="rounded-full border border-stone-300 bg-white px-4 py-1.5 text-xs font-black text-stone-600"
+                                          onClick={() => deleteOption(decision.id, option.id)}
+                                          disabled={decision.status === "Locked"}
+                                        >
+                                          Delete
+                                        </button>
+                                      </>
+                                    ) : null}
+                                  </div>
                                 </div>
-                              </div>
-                              <p className="mt-3 text-xs font-semibold text-stone-500">{option.votes.length > 0 ? `Voted: ${option.votes.join(", ")}` : "No votes yet"}</p>
+                              )}
+
+                              {!isEditing ? (
+                                <p className="mt-3 text-xs font-semibold text-stone-500">{option.votes.length > 0 ? `Voted: ${option.votes.join(", ")}` : "No votes yet"}</p>
+                              ) : null}
                             </div>
                           );
                         })}
