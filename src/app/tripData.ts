@@ -48,6 +48,7 @@ export type TripDetails = {
   subtitle: string;
   dates: string;
   apartmentAddress: string;
+apartmentMapsUrl?: string;
   photosUrl: string;
   heroImagePath: string;
   attendees: string[];
@@ -67,7 +68,8 @@ export const tripDetails: TripDetails = {
   title: "Cali Weekend Planner",
   subtitle: "A simple group plan for food, drinks, salsa, rooftops, and one proper Saturday night party.",
   dates: "June 11 to June 14, 2026",
-  apartmentAddress: "Avenida 4A Oeste #5-125, Apt 205, Cali, Valle del Cauca 760045",
+  apartmentAddress: "Passiflora Luxury Suites, Normandía, Av. 4a Oe. #5-125, Apt 205, Normandia Sebastian de Belalcazar, Cali, Valle del Cauca",
+apartmentMapsUrl: "https://maps.app.goo.gl/w4suiw2bmCpeermW6",
   photosUrl: "https://photos.app.goo.gl/gP95oBDz7hfKkgks9",
   heroImagePath: "/cali-hero.jpg",
   attendees: ["Will", "Paula", "Vane", "Josh"],

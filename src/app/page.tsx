@@ -172,9 +172,12 @@ function getSummaryLabel(decision: TripDecision) {
 }
 
 function getApartmentMapsUrl() {
-  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-    tripDetails.apartmentAddress
-  )}`;
+  return (
+    tripDetails.apartmentMapsUrl ||
+    `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+      tripDetails.apartmentAddress
+    )}`
+  );
 }
 
 function emptyDraft(): NewOptionDraft {
